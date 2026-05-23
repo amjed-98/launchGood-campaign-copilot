@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BarChart3, ListChecks, ShieldCheck } from "lucide-react";
+import { BarChart3, ListChecks, PlusCircle, ShieldCheck } from "lucide-react";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
@@ -19,6 +19,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Link className="inline-flex items-center gap-2 rounded-md px-3 py-2 font-medium text-muted-foreground hover:bg-muted hover:text-foreground" href="/dashboard">
               <ListChecks className="size-4" aria-hidden="true" />
               Queue
+            </Link>
+            <Link className="inline-flex items-center gap-2 rounded-md px-3 py-2 font-medium text-muted-foreground hover:bg-muted hover:text-foreground" href="/intake">
+              <PlusCircle className="size-4" aria-hidden="true" />
+              Intake
             </Link>
             <Link className="inline-flex items-center gap-2 rounded-md px-3 py-2 font-medium text-muted-foreground hover:bg-muted hover:text-foreground" href="/ops">
               <BarChart3 className="size-4" aria-hidden="true" />

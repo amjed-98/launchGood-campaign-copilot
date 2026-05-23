@@ -65,6 +65,12 @@ export function updateQueueCampaign(queue: LocalQueue, campaignId: string, actio
   };
 }
 
+export function appendCampaignToQueue(queue: LocalQueue, campaign: Campaign): LocalQueue {
+  return {
+    records: [...queue.records.map(cloneCampaign), cloneCampaign(campaign)]
+  };
+}
+
 export function findQueuedCampaign(queue: LocalQueue, campaignId: string) {
   return queue.records.find((campaign) => campaign.id === campaignId);
 }
