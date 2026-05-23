@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyReviewerAction,
   createSeededQueue,
   getActiveCampaigns,
   getResolvedCampaigns,
@@ -100,5 +101,95 @@ describe("Unified Local Queue", () => {
       "high-newer",
       "low-new"
     ]);
+  });
+
+  it("records resolved lifecycle actions with required reasons and approval blockers", () => {
+    const missingDocs = campaign({
+      id: "missing-docs",
+      riskTier: "MEDIUM",
+      submittedAt: "2026-05-23T06:00:00+03:00",
+      missingDocuments: ["bank_verification"]
+    });
+    const complianceBlocked = campaign({
+      id: "compliance-blocked",
+      riskTier: "ESCALATE",
+      submittedAt: "2026-05-23T05:00:00+03:00",
+      missingDocuments: ["compliance_clearance"]
+    });
+
+    const queue = createSeededQueue([missingDocs, complianceBlocked]);
+
+    expect(() =>
+      applyReviewerAction(queue, "missing-docs", {
+        type: "APPROVE",
+        timestamp: "2026-05-23T09:00:00+03:00"
+      })
+    ).toThrow("Approval is blocked by missing required documents.");
+
+    const overridden = applyReviewerAction(queue, "missing-docs", {
+      type: "DOCUMENT_GAP_OVERRIDE",
+      reason: "Reviewer verified the receiving account in the internal KYC tool.",
+      timestamp: "2026-05-23T09:05:00+03:00"
+    });
+    const approved = applyReviewerAction(overridden, "missing-docs", {
+      type: "APPROVE",
+      timestamp: "2026-05-23T09:10:00+03:00"
+    });
+
+    expect(approved.records.find((record) => record.id === "missing-docs")?.status).toBe("Approved");
+    expect(approved.records.find((record) => record.id === "missing-docs")?.reviewEvents?.map((event) => event.type)).toEqual([
+      "DOCUMENT_GAP_OVERRIDE",
+      "APPROVAL"
+    ]);
+    expect(getActiveCampaigns(approved).map((record) => record.id)).toEqual(["compliance-blocked"]);
+
+    expect(() =>
+      applyReviewerAction(queue, "compliance-blocked", {
+        type: "DOCUMENT_GAP_OVERRIDE",
+        reason: "Trying to override compliance clearance.",
+        timestamp: "2026-05-23T09:15:00+03:00"
+      })
+    ).toThrow("Compliance clearance cannot be bypassed by document gap override.");
+
+    expect(() =>
+      applyReviewerAction(queue, "missing-docs", {
+        type: "REJECT",
+        timestamp: "2026-05-23T09:20:00+03:00"
+      })
+    ).toThrow("Resolution reason is required for rejection.");
+  });
+
+  it("records non-final lifecycle actions as active history and rejection as resolved history", () => {
+    const queue = createSeededQueue([
+      campaign({ id: "needs-docs", riskTier: "MEDIUM", submittedAt: "2026-05-23T06:00:00+03:00" }),
+      campaign({ id: "needs-senior", riskTier: "HIGH", submittedAt: "2026-05-23T05:00:00+03:00" }),
+      campaign({ id: "not-eligible", riskTier: "LOW", submittedAt: "2026-05-23T04:00:00+03:00" })
+    ]);
+
+    const waiting = applyReviewerAction(queue, "needs-docs", {
+      type: "REQUEST_DOCS",
+      draft: "Please upload bank verification.",
+      timestamp: "2026-05-23T09:00:00+03:00"
+    });
+    const escalated = applyReviewerAction(waiting, "needs-senior", {
+      type: "ESCALATE",
+      reason: "Large goal needs senior reviewer context.",
+      timestamp: "2026-05-23T09:05:00+03:00"
+    });
+    const rejected = applyReviewerAction(escalated, "not-eligible", {
+      type: "REJECT",
+      reason: "Campaign purpose is outside supported categories.",
+      timestamp: "2026-05-23T09:10:00+03:00"
+    });
+
+    expect(rejected.records.find((record) => record.id === "needs-docs")?.status).toBe("Waiting on creator");
+    expect(rejected.records.find((record) => record.id === "needs-senior")?.status).toBe("Escalated");
+    expect(rejected.records.find((record) => record.id === "not-eligible")?.status).toBe("Rejected");
+    expect(getActiveCampaigns(rejected).map((record) => record.id)).toEqual(["needs-senior", "needs-docs"]);
+    expect(getResolvedCampaigns(rejected).map((record) => record.id)).toEqual(["not-eligible"]);
+    expect(rejected.records.find((record) => record.id === "needs-docs")?.reviewEvents?.[0]).toMatchObject({
+      type: "DOCUMENT_REQUEST",
+      draft: "Please upload bank verification."
+    });
   });
 });

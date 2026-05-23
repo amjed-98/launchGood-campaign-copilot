@@ -1,11 +1,37 @@
 import { campaigns as seededCampaigns } from "@/lib/mock-campaigns";
 import { riskWeight } from "@/lib/risk";
-import type { Campaign, CampaignStatus } from "@/lib/types";
+import type { Campaign, CampaignStatus, ReviewEvent } from "@/lib/types";
 
 export const LOCAL_QUEUE_STORAGE_KEY = "launchgood-local-queue:v1";
 export const LOCAL_QUEUE_UPDATED_EVENT = "launchgood-local-queue-updated";
 
 export type QueueAction = "APPROVE" | "REJECT" | "REQUEST_DOCS" | "ESCALATE";
+
+export type ReviewerQueueAction =
+  | {
+      type: "APPROVE";
+      timestamp?: string;
+    }
+  | {
+      type: "REJECT";
+      reason?: string;
+      timestamp?: string;
+    }
+  | {
+      type: "REQUEST_DOCS";
+      draft: string;
+      timestamp?: string;
+    }
+  | {
+      type: "ESCALATE";
+      reason?: string;
+      timestamp?: string;
+    }
+  | {
+      type: "DOCUMENT_GAP_OVERRIDE";
+      reason?: string;
+      timestamp?: string;
+    };
 
 export type LocalQueue = {
   records: Campaign[];
@@ -62,6 +88,89 @@ export function updateQueueCampaign(queue: LocalQueue, campaignId: string, actio
     records: queue.records.map((campaign) =>
       campaign.id === campaignId ? updateCampaignStatus(campaign, action) : cloneCampaign(campaign)
     )
+  };
+}
+
+export function applyReviewerAction(queue: LocalQueue, campaignId: string, action: ReviewerQueueAction): LocalQueue {
+  return {
+    records: queue.records.map((campaign) => {
+      if (campaign.id !== campaignId) {
+        return cloneCampaign(campaign);
+      }
+
+      if (isResolvedCampaign(campaign)) {
+        throw new Error("Resolved campaigns cannot receive final reviewer actions.");
+      }
+
+      const nextCampaign = cloneCampaign(campaign);
+      const timestamp = action.timestamp ?? new Date().toISOString();
+
+      if (action.type === "DOCUMENT_GAP_OVERRIDE") {
+        const reason = requireReason(action.reason, "Document gap override");
+        if (nextCampaign.missingDocuments.includes("compliance_clearance")) {
+          throw new Error("Compliance clearance cannot be bypassed by document gap override.");
+        }
+        return addReviewEvent(nextCampaign, {
+          type: "DOCUMENT_GAP_OVERRIDE",
+          campaignId,
+          note: reason,
+          timestamp,
+          missingDocuments: [...nextCampaign.missingDocuments]
+        });
+      }
+
+      if (action.type === "APPROVE") {
+        if (hasMissingDocumentsBlockingApproval(nextCampaign)) {
+          throw new Error("Approval is blocked by missing required documents.");
+        }
+        return addReviewEvent(
+          { ...nextCampaign, status: "Approved" },
+          {
+            type: "APPROVAL",
+            campaignId,
+            note: "Campaign approved by reviewer.",
+            timestamp
+          }
+        );
+      }
+
+      if (action.type === "REJECT") {
+        const reason = requireReason(action.reason, "Resolution reason is required for rejection");
+        return addReviewEvent(
+          { ...nextCampaign, status: "Rejected" },
+          {
+            type: "REJECTION",
+            campaignId,
+            note: reason,
+            timestamp
+          }
+        );
+      }
+
+      if (action.type === "ESCALATE") {
+        const reason = requireReason(action.reason, "Resolution reason is required for escalation");
+        return addReviewEvent(
+          { ...nextCampaign, status: "Escalated" },
+          {
+            type: "ESCALATION",
+            campaignId,
+            note: reason,
+            timestamp
+          }
+        );
+      }
+
+      return addReviewEvent(
+        { ...nextCampaign, status: "Waiting on creator" },
+        {
+          type: "DOCUMENT_REQUEST",
+          campaignId,
+          note: "Document request sent to creator.",
+          draft: action.draft,
+          timestamp
+        }
+      );
+    })
   };
 }
 
@@ -126,6 +235,37 @@ function cloneCampaign(campaign: Campaign): Campaign {
     documentsSubmitted: [...campaign.documentsSubmitted],
     missingDocuments: [...campaign.missingDocuments],
     riskSignals: [...campaign.riskSignals],
-    positiveSignals: [...campaign.positiveSignals]
+    positiveSignals: [...campaign.positiveSignals],
+    reviewEvents: campaign.reviewEvents?.map((event) => ({
+      ...event,
+      missingDocuments: event.missingDocuments ? [...event.missingDocuments] : undefined
+    }))
   };
+}
+
+function addReviewEvent(campaign: Campaign, event: ReviewEvent): Campaign {
+  return {
+    ...campaign,
+    reviewEvents: [...(campaign.reviewEvents ?? []), event]
+  };
+}
+
+function hasMissingDocumentsBlockingApproval(campaign: Campaign) {
+  if (campaign.missingDocuments.length === 0) {
+    return false;
+  }
+
+  if (campaign.missingDocuments.includes("compliance_clearance")) {
+    return true;
+  }
+
+  return !campaign.reviewEvents?.some((event) => event.type === "DOCUMENT_GAP_OVERRIDE");
+}
+
+function requireReason(reason: string | undefined, label: string) {
+  const trimmed = reason?.trim();
+  if (!trimmed) {
+    throw new Error(label.endsWith(".") ? label : `${label}.`);
+  }
+  return trimmed;
 }

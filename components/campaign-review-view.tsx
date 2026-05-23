@@ -17,23 +17,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Textarea } from "@/components/ui/textarea";
 import { useLocalQueue } from "@/components/use-local-queue";
 import {
+  applyReviewerAction,
   findQueuedCampaign,
+  isResolvedCampaign,
   notifyLocalQueueChanged,
   readQueueFromStorage,
-  updateQueueCampaign,
   writeQueueToStorage,
-  type QueueAction
+  type ReviewerQueueAction
 } from "@/lib/local-queue";
 import { formatMoney } from "@/lib/risk";
-import type { Campaign, TriageResult } from "@/lib/types";
-
-type DecisionLog = {
-  campaignId: string;
-  action: "APPROVE" | "REQUEST_DOCS" | "ESCALATE";
-  note: string;
-  draft?: string;
-  timestamp: string;
-};
+import type { Campaign, ReviewEventType, TriageResult } from "@/lib/types";
 
 const actionLabels = {
   APPROVE_REVIEW: "Approval review",
@@ -42,10 +35,7 @@ const actionLabels = {
   ESCALATE_COMPLIANCE: "Compliance escalation"
 };
 
-const finalStatuses = new Set(["Approved", "Rejected"]);
-
 export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
-  const storageKey = `launchgood-review-log:${campaign.id}`;
   const queue = useLocalQueue();
   const currentCampaign = findQueuedCampaign(queue, campaign.id) ?? campaign;
   const [triage, setTriage] = useState<TriageResult>({
@@ -58,15 +48,10 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
     reviewer_note: campaign.reviewerNote
   });
   const [emailDraft, setEmailDraft] = useState("");
+  const [resolutionReason, setResolutionReason] = useState("");
+  const [actionError, setActionError] = useState("");
   const [loadingTriage, setLoadingTriage] = useState(false);
   const [loadingEmail, setLoadingEmail] = useState(false);
-  const [decisionLog, setDecisionLog] = useState<DecisionLog[]>(() => {
-    if (typeof window === "undefined") {
-      return [];
-    }
-    const saved = window.localStorage.getItem(storageKey);
-    return saved ? (JSON.parse(saved) as DecisionLog[]) : [];
-  });
 
   const derivedEmailIntent = useMemo(() => {
     if (triage.recommended_action === "APPROVE_REVIEW") return "approval-ready note";
@@ -75,7 +60,13 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
     return "document request";
   }, [triage.recommended_action]);
 
-  const isResolved = finalStatuses.has(currentCampaign.status);
+  const isResolved = isResolvedCampaign(currentCampaign);
+  const hasMissingDocuments = currentCampaign.missingDocuments.length > 0;
+  const hasComplianceClearanceGap = currentCampaign.missingDocuments.includes("compliance_clearance");
+  const hasDocumentGapOverride =
+    currentCampaign.reviewEvents?.some((event) => event.type === "DOCUMENT_GAP_OVERRIDE") ?? false;
+  const isApprovalBlocked =
+    hasMissingDocuments && (hasComplianceClearanceGap || !hasDocumentGapOverride);
 
   async function runTriage() {
     setLoadingTriage(true);
@@ -139,34 +130,19 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
     }
   }
 
-  function logDecision(action: DecisionLog["action"]) {
-    const decisionNotes = {
-      APPROVE: "Campaign approved by reviewer.",
-      REQUEST_DOCS: "Document request sent to creator.",
-      ESCALATE: "Campaign escalated to senior reviewer."
-    };
-    const nextLog = [
-      {
-        campaignId: campaign.id,
-        action,
-        note: decisionNotes[action],
-        draft: action === "REQUEST_DOCS" ? emailDraft : undefined,
-        timestamp: new Date().toISOString()
-      },
-      ...decisionLog
-    ];
-    setDecisionLog(nextLog);
-    window.localStorage.setItem(storageKey, JSON.stringify(nextLog));
-
-    const queueActionByDecision: Record<DecisionLog["action"], QueueAction> = {
-      APPROVE: "APPROVE",
-      REQUEST_DOCS: "REQUEST_DOCS",
-      ESCALATE: "ESCALATE"
-    };
-    const queue = readQueueFromStorage(window.localStorage);
-    const nextQueue = updateQueueCampaign(queue, currentCampaign.id, queueActionByDecision[action]);
-    writeQueueToStorage(window.localStorage, nextQueue);
-    notifyLocalQueueChanged();
+  function applyAction(action: ReviewerQueueAction) {
+    try {
+      const storedQueue = readQueueFromStorage(window.localStorage);
+      const nextQueue = applyReviewerAction(storedQueue, currentCampaign.id, action);
+      writeQueueToStorage(window.localStorage, nextQueue);
+      notifyLocalQueueChanged();
+      setActionError("");
+      if (action.type !== "REQUEST_DOCS") {
+        setResolutionReason("");
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Unable to record reviewer action.");
+    }
   }
 
   return (
@@ -316,22 +292,64 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
                 disabled={isResolved}
               />
               <div className="grid gap-2">
-                <Button variant="secondary" onClick={() => logDecision("APPROVE")} disabled={isResolved}>
+                <Button
+                  variant="secondary"
+                  onClick={() => applyAction({ type: "APPROVE" })}
+                  disabled={isResolved || isApprovalBlocked}
+                >
                   <ClipboardCheck className="size-4" aria-hidden="true" />
                   Approve Campaign
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => logDecision("REQUEST_DOCS")}
+                  onClick={() => applyAction({ type: "REQUEST_DOCS", draft: emailDraft })}
                   disabled={isResolved || !emailDraft.trim()}
                 >
                   <Send className="size-4" aria-hidden="true" />
                   Send Document Request
                 </Button>
-                <Button variant="destructive" onClick={() => logDecision("ESCALATE")} disabled={isResolved}>
+                <Button
+                  variant="outline"
+                  onClick={() => applyAction({ type: "DOCUMENT_GAP_OVERRIDE", reason: resolutionReason })}
+                  disabled={isResolved || !hasMissingDocuments || hasComplianceClearanceGap}
+                >
+                  <FileCheck2 className="size-4" aria-hidden="true" />
+                  Record Document Gap Override
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => applyAction({ type: "REJECT", reason: resolutionReason })}
+                  disabled={isResolved}
+                >
+                  <AlertTriangle className="size-4" aria-hidden="true" />
+                  Reject Campaign
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => applyAction({ type: "ESCALATE", reason: resolutionReason })}
+                  disabled={isResolved}
+                >
                   <ShieldAlert className="size-4" aria-hidden="true" />
                   Escalate to Senior Reviewer
                 </Button>
+                <Textarea
+                  value={resolutionReason}
+                  onChange={(event) => setResolutionReason(event.target.value)}
+                  className="min-h-[100px]"
+                  placeholder="Resolution reason for rejection, escalation, or document gap override."
+                  disabled={isResolved}
+                />
+                {isApprovalBlocked ? (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    Approval is blocked until required document gaps are resolved or an allowed document gap override is
+                    recorded. Compliance clearance cannot be overridden.
+                  </p>
+                ) : null}
+                {actionError ? (
+                  <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">
+                    {actionError}
+                  </p>
+                ) : null}
                 {isResolved ? (
                   <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
                     Final action controls are disabled for resolved campaign records.
@@ -341,18 +359,18 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
             </CardContent>
           </Card>
 
-          {decisionLog.length > 0 ? (
+          {currentCampaign.reviewEvents && currentCampaign.reviewEvents.length > 0 ? (
             <Card>
               <CardHeader>
-                <CardTitle>Decision Log</CardTitle>
-                <CardDescription>Local prototype record with reviewer timestamps.</CardDescription>
+                <CardTitle>Decision History</CardTitle>
+                <CardDescription>Local prototype record with reviewer timestamps and reasons.</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="divide-y rounded-md border">
-                  {decisionLog.map((entry) => (
-                    <div key={`${entry.timestamp}-${entry.action}`} className="p-3 text-sm">
+                  {[...currentCampaign.reviewEvents].reverse().map((entry) => (
+                    <div key={`${entry.timestamp}-${entry.type}`} className="p-3 text-sm">
                       <div className="flex items-center justify-between gap-3">
-                        <span className="font-medium">{entry.action}</span>
+                        <span className="font-medium">{formatReviewEventType(entry.type)}</span>
                         <time className="text-xs text-muted-foreground">
                           {new Date(entry.timestamp).toLocaleString()}
                         </time>
@@ -381,6 +399,17 @@ function Metric({ label, value }: { label: string; value: string }) {
 
 function formatDocumentName(document: string) {
   return document.replaceAll("_", " ");
+}
+
+function formatReviewEventType(type: ReviewEventType) {
+  const labels: Record<ReviewEventType, string> = {
+    APPROVAL: "Approval",
+    REJECTION: "Rejection",
+    DOCUMENT_REQUEST: "Document request",
+    ESCALATION: "Escalation",
+    DOCUMENT_GAP_OVERRIDE: "Document gap override"
+  };
+  return labels[type];
 }
 
 function DocumentList({ documents, emptyText }: { documents: string[]; emptyText: string }) {

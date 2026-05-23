@@ -32,6 +32,23 @@ export type Campaign = {
   positiveSignals: string[];
   recommendedAction: RecommendedAction;
   reviewerNote: string;
+  reviewEvents?: ReviewEvent[];
+};
+
+export type ReviewEventType =
+  | "APPROVAL"
+  | "REJECTION"
+  | "DOCUMENT_REQUEST"
+  | "ESCALATION"
+  | "DOCUMENT_GAP_OVERRIDE";
+
+export type ReviewEvent = {
+  type: ReviewEventType;
+  campaignId: string;
+  note: string;
+  timestamp: string;
+  draft?: string;
+  missingDocuments?: string[];
 };
 
 export type TriageResult = {
