@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 import { fallbackTriage } from "@/lib/ai-fallback";
+import { checkDocumentGaps } from "@/lib/document-gap";
 import { getAnthropicApiKey } from "@/lib/server-env";
 import type { Campaign, RecommendedAction, RiskTier, TriageResult } from "@/lib/types";
 
@@ -77,6 +78,7 @@ export async function POST(request: Request) {
   }
 
   const apiKey = getAnthropicApiKey();
+  const documentGaps = checkDocumentGaps(campaign);
 
   if (!apiKey) {
     return NextResponse.json(fallbackTriage(campaign));
@@ -96,10 +98,13 @@ export async function POST(request: Request) {
         role: "user",
         content: `Risk-score this campaign for human review.
 
-Use only evidence present in the campaign data. If documents are missing, use stable snake_case document keys. Keep signals short and specific.
+Use only evidence present in the campaign data. Missing required documents are deterministic and provided below; do not invent, remove, or replace them. Keep signals short and specific.
 
 Campaign:
-${JSON.stringify(campaign, null, 2)}`
+${JSON.stringify(campaign, null, 2)}
+
+Deterministic document gap check:
+${JSON.stringify(documentGaps, null, 2)}`
       }
     ]
   });
@@ -118,7 +123,10 @@ ${JSON.stringify(campaign, null, 2)}`
     return NextResponse.json({ error: "Claude returned an invalid triage result" }, { status: 502 });
   }
 
-  return NextResponse.json(parsed);
+  return NextResponse.json({
+    ...parsed,
+    missing_documents: documentGaps.missingRequiredDocuments
+  });
 }
 
 function parseTriageResult(input: unknown): TriageResult | null {

@@ -1,15 +1,112 @@
 import type { Campaign, TriageResult } from "@/lib/types";
+import { checkDocumentGaps } from "@/lib/document-gap";
 
 export function fallbackTriage(campaign: Campaign): TriageResult {
+  const documentGaps = checkDocumentGaps(campaign);
+  const riskSignals = [
+    ...documentGaps.riskSignals,
+    ...creatorRiskSignals(campaign)
+  ];
+  const positiveSignals = [
+    ...documentGaps.positiveSignals,
+    ...campaignCompletenessSignals(documentGaps.missingRequiredDocuments)
+  ];
+  const riskTier = getFallbackRiskTier(campaign, documentGaps.missingRequiredDocuments, riskSignals);
+
   return {
-    risk_tier: campaign.riskTier,
-    confidence: campaign.confidence,
-    risk_signals: campaign.riskSignals,
-    positive_signals: campaign.positiveSignals,
-    missing_documents: campaign.missingDocuments,
-    recommended_action: campaign.recommendedAction,
-    reviewer_note: campaign.reviewerNote
+    risk_tier: riskTier,
+    confidence: getFallbackConfidence(riskTier),
+    risk_signals: riskSignals,
+    positive_signals: positiveSignals,
+    missing_documents: documentGaps.missingRequiredDocuments,
+    recommended_action: getRecommendedAction(riskTier, documentGaps.missingRequiredDocuments),
+    reviewer_note: getReviewerNote(riskTier, documentGaps.ruleExplanations)
   };
+}
+
+function creatorRiskSignals(campaign: Campaign) {
+  const signals: string[] = [];
+
+  if (campaign.previousCampaigns === 0) {
+    signals.push("First-time creator");
+  }
+
+  if (campaign.accountAgeDays < 30) {
+    signals.push("New account");
+  }
+
+  return signals;
+}
+
+function campaignCompletenessSignals(missingRequiredDocuments: string[]) {
+  if (missingRequiredDocuments.length > 0) {
+    return [];
+  }
+
+  return ["Required documents complete"];
+}
+
+function getFallbackRiskTier(
+  campaign: Campaign,
+  missingRequiredDocuments: string[],
+  riskSignals: string[]
+): TriageResult["risk_tier"] {
+  if (campaign.sanctionsScreen === "confirmed_hit") {
+    return "ESCALATE";
+  }
+
+  if (
+    campaign.sanctionsScreen === "name_match" ||
+    campaign.sanctionsScreen === "pending" ||
+    riskSignals.includes("Sensitive beneficiary location requires enhanced due diligence") ||
+    (campaign.goalAmount >= 50_000 && campaign.previousCampaigns === 0)
+  ) {
+    return "HIGH";
+  }
+
+  if (
+    missingRequiredDocuments.length > 0 ||
+    campaign.previousCampaigns === 0 ||
+    campaign.accountAgeDays < 30
+  ) {
+    return "MEDIUM";
+  }
+
+  return "LOW";
+}
+
+function getFallbackConfidence(riskTier: TriageResult["risk_tier"]) {
+  const confidenceByTier: Record<TriageResult["risk_tier"], number> = {
+    LOW: 0.82,
+    MEDIUM: 0.78,
+    HIGH: 0.84,
+    ESCALATE: 0.93
+  };
+
+  return confidenceByTier[riskTier];
+}
+
+function getRecommendedAction(
+  riskTier: TriageResult["risk_tier"],
+  missingRequiredDocuments: string[]
+): TriageResult["recommended_action"] {
+  if (riskTier === "ESCALATE") {
+    return "ESCALATE_COMPLIANCE";
+  }
+
+  if (riskTier === "HIGH") {
+    return "SENIOR_REVIEW";
+  }
+
+  if (missingRequiredDocuments.length > 0) {
+    return "REQUEST_DOCUMENTS";
+  }
+
+  return "APPROVE_REVIEW";
+}
+
+function getReviewerNote(riskTier: TriageResult["risk_tier"], ruleExplanations: string[]) {
+  return `Fallback triage assigned ${riskTier} from deterministic prototype rules: ${ruleExplanations.join(" ")}`;
 }
 
 export function fallbackEmailDraft(campaign: Campaign, triage: TriageResult) {
