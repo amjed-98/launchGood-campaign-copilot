@@ -1,6 +1,6 @@
 export type RiskTier = "LOW" | "MEDIUM" | "HIGH" | "ESCALATE";
 
-export type CampaignStatus = "New" | "In review" | "Waiting on creator" | "Escalated";
+export type CampaignStatus = "New" | "In review" | "Waiting on creator" | "Escalated" | "Approved" | "Rejected";
 
 export type RecommendedAction =
   | "APPROVE_REVIEW"

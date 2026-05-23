@@ -18,19 +18,35 @@ function formatQueueTime(hours: number) {
   return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
 }
 
-export function CampaignQueueTable({ campaigns }: { campaigns: Campaign[] }) {
+export function CampaignQueueTable({
+  campaigns,
+  showStatus = false
+}: {
+  campaigns: Campaign[];
+  showStatus?: boolean;
+}) {
   const sortedCampaigns = sortByRisk(campaigns);
+
+  if (sortedCampaigns.length === 0) {
+    return (
+      <div className="rounded-lg border bg-white px-4 py-10 text-center shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+        <p className="text-sm font-medium">No campaigns in this view</p>
+        <p className="mt-1 text-sm text-muted-foreground">Switch views or reset the local demo queue.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="overflow-hidden rounded-lg border bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
+        <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
           <thead className="bg-primary/5 text-xs uppercase tracking-normal text-muted-foreground">
             <tr>
               <th className="px-4 py-3 font-semibold">Campaign</th>
               <th className="px-4 py-3 font-semibold">Creator location</th>
               <th className="px-4 py-3 font-semibold">Goal</th>
               <th className="px-4 py-3 font-semibold">Risk tier</th>
+              {showStatus ? <th className="px-4 py-3 font-semibold">Status</th> : null}
               <th className="px-4 py-3 font-semibold">Time in queue</th>
               <th className="px-4 py-3 font-semibold">AI summary</th>
             </tr>
@@ -53,6 +69,7 @@ export function CampaignQueueTable({ campaigns }: { campaigns: Campaign[] }) {
                   <td className="px-4 py-4">
                     <RiskBadge tier={campaign.riskTier} />
                   </td>
+                  {showStatus ? <td className="px-4 py-4 text-muted-foreground">{campaign.status}</td> : null}
                   <td className="px-4 py-4">
                     <div className="flex items-center gap-2 whitespace-nowrap">
                       <Clock

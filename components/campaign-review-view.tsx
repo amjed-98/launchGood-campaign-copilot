@@ -15,6 +15,15 @@ import { RiskBadge } from "@/components/risk-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
+import { useLocalQueue } from "@/components/use-local-queue";
+import {
+  findQueuedCampaign,
+  notifyLocalQueueChanged,
+  readQueueFromStorage,
+  updateQueueCampaign,
+  writeQueueToStorage,
+  type QueueAction
+} from "@/lib/local-queue";
 import { formatMoney } from "@/lib/risk";
 import type { Campaign, TriageResult } from "@/lib/types";
 
@@ -33,8 +42,12 @@ const actionLabels = {
   ESCALATE_COMPLIANCE: "Compliance escalation"
 };
 
+const finalStatuses = new Set(["Approved", "Rejected"]);
+
 export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
   const storageKey = `launchgood-review-log:${campaign.id}`;
+  const queue = useLocalQueue();
+  const currentCampaign = findQueuedCampaign(queue, campaign.id) ?? campaign;
   const [triage, setTriage] = useState<TriageResult>({
     risk_tier: campaign.riskTier,
     confidence: campaign.confidence,
@@ -62,13 +75,15 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
     return "document request";
   }, [triage.recommended_action]);
 
+  const isResolved = finalStatuses.has(currentCampaign.status);
+
   async function runTriage() {
     setLoadingTriage(true);
     try {
       const response = await fetch("/api/triage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaign })
+        body: JSON.stringify({ campaign: currentCampaign })
       });
       if (!response.ok) throw new Error("Unable to run triage");
       const data = (await response.json()) as TriageResult;
@@ -83,7 +98,7 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        campaign,
+        campaign: currentCampaign,
         missingDocuments: triage.missing_documents,
         triage
       })
@@ -91,7 +106,7 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
     if (!response.ok) throw new Error("Unable to draft email");
     const data = (await response.json()) as { draft: string };
     return data.draft;
-  }, [campaign, triage]);
+  }, [currentCampaign, triage]);
 
   useEffect(() => {
     let ignore = false;
@@ -142,6 +157,16 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
     ];
     setDecisionLog(nextLog);
     window.localStorage.setItem(storageKey, JSON.stringify(nextLog));
+
+    const queueActionByDecision: Record<DecisionLog["action"], QueueAction> = {
+      APPROVE: "APPROVE",
+      REQUEST_DOCS: "REQUEST_DOCS",
+      ESCALATE: "ESCALATE"
+    };
+    const queue = readQueueFromStorage(window.localStorage);
+    const nextQueue = updateQueueCampaign(queue, currentCampaign.id, queueActionByDecision[action]);
+    writeQueueToStorage(window.localStorage, nextQueue);
+    notifyLocalQueueChanged();
   }
 
   return (
@@ -152,10 +177,10 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
             <CardHeader>
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <CardDescription>{campaign.id}</CardDescription>
-                  <h1 className="mt-2 text-3xl font-semibold tracking-normal">{campaign.title}</h1>
+                  <CardDescription>{currentCampaign.id}</CardDescription>
+                  <h1 className="mt-2 text-3xl font-semibold tracking-normal">{currentCampaign.title}</h1>
                 </div>
-                <Button onClick={runTriage} disabled={loadingTriage}>
+                <Button onClick={runTriage} disabled={loadingTriage || isResolved}>
                   {loadingTriage ? (
                     <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                   ) : (
@@ -167,17 +192,17 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <Metric label="Creator" value={campaign.creatorName} />
-                <Metric label="Creator location" value={campaign.creatorLocation} />
-                <Metric label="Beneficiary location" value={campaign.beneficiaryLocation} />
-                <Metric label="Goal" value={formatMoney(campaign.goalAmount)} />
-                <Metric label="Category" value={campaign.category} />
-                <Metric label="Submitted" value={new Date(campaign.submittedAt).toLocaleString()} />
+                <Metric label="Creator" value={currentCampaign.creatorName} />
+                <Metric label="Creator location" value={currentCampaign.creatorLocation} />
+                <Metric label="Beneficiary location" value={currentCampaign.beneficiaryLocation} />
+                <Metric label="Goal" value={formatMoney(currentCampaign.goalAmount)} />
+                <Metric label="Category" value={currentCampaign.category} />
+                <Metric label="Submitted" value={new Date(currentCampaign.submittedAt).toLocaleString()} />
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
-                <Metric label="Account age" value={`${campaign.accountAgeDays} days`} />
-                <Metric label="Prior campaigns" value={`${campaign.previousCampaigns}`} />
-                <Metric label="Sanctions screen" value={campaign.sanctionsScreen.replaceAll("_", " ")} />
+                <Metric label="Review status" value={currentCampaign.status} />
+                <Metric label="Account age" value={`${currentCampaign.accountAgeDays} days`} />
+                <Metric label="Sanctions screen" value={currentCampaign.sanctionsScreen.replaceAll("_", " ")} />
               </div>
             </CardContent>
           </Card>
@@ -188,7 +213,7 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
               <CardDescription>Submission copy available to the reviewer.</CardDescription>
             </CardHeader>
             <CardContent>
-              <p className="text-sm leading-6 text-muted-foreground">{campaign.description}</p>
+              <p className="text-sm leading-6 text-muted-foreground">{currentCampaign.description}</p>
             </CardContent>
           </Card>
 
@@ -198,7 +223,7 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
               <CardDescription>Files included with the campaign submission.</CardDescription>
             </CardHeader>
             <CardContent>
-              <DocumentList documents={campaign.documentsSubmitted} emptyText="No documents were submitted." />
+              <DocumentList documents={currentCampaign.documentsSubmitted} emptyText="No documents were submitted." />
             </CardContent>
           </Card>
         </section>
@@ -275,7 +300,7 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
               <CardDescription>Editable {derivedEmailIntent} for human review.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Button className="w-full" onClick={generateEmail} disabled={loadingEmail}>
+              <Button className="w-full" onClick={generateEmail} disabled={loadingEmail || isResolved}>
                 {loadingEmail ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                 ) : (
@@ -288,20 +313,30 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
                 onChange={(event) => setEmailDraft(event.target.value)}
                 className="min-h-[320px]"
                 placeholder="AI-generated email draft will appear here."
+                disabled={isResolved}
               />
               <div className="grid gap-2">
-                <Button variant="secondary" onClick={() => logDecision("APPROVE")}>
+                <Button variant="secondary" onClick={() => logDecision("APPROVE")} disabled={isResolved}>
                   <ClipboardCheck className="size-4" aria-hidden="true" />
                   Approve Campaign
                 </Button>
-                <Button variant="outline" onClick={() => logDecision("REQUEST_DOCS")} disabled={!emailDraft.trim()}>
+                <Button
+                  variant="outline"
+                  onClick={() => logDecision("REQUEST_DOCS")}
+                  disabled={isResolved || !emailDraft.trim()}
+                >
                   <Send className="size-4" aria-hidden="true" />
                   Send Document Request
                 </Button>
-                <Button variant="destructive" onClick={() => logDecision("ESCALATE")}>
+                <Button variant="destructive" onClick={() => logDecision("ESCALATE")} disabled={isResolved}>
                   <ShieldAlert className="size-4" aria-hidden="true" />
                   Escalate to Senior Reviewer
                 </Button>
+                {isResolved ? (
+                  <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                    Final action controls are disabled for resolved campaign records.
+                  </p>
+                ) : null}
               </div>
             </CardContent>
           </Card>

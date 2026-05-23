@@ -1,17 +1,6 @@
-import { AlertTriangle, CheckCircle2, Clock3, ShieldAlert } from "lucide-react";
-import type { ElementType } from "react";
 import { AppShell } from "@/components/app-shell";
-import { CampaignQueueTable } from "@/components/campaign-queue-table";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LocalQueueDashboard } from "@/components/local-queue-dashboard";
 import { campaigns } from "@/lib/mock-campaigns";
-import type { RiskTier } from "@/lib/types";
-
-const summaryCards: Array<{ label: string; tier?: RiskTier; icon: ElementType }> = [
-  { label: "Escalations", tier: "ESCALATE", icon: ShieldAlert },
-  { label: "High risk", tier: "HIGH", icon: AlertTriangle },
-  { label: "Medium risk", tier: "MEDIUM", icon: Clock3 },
-  { label: "Low risk", tier: "LOW", icon: CheckCircle2 }
-];
 
 export default function DashboardPage() {
   return (
@@ -30,24 +19,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {summaryCards.map(({ label, tier, icon: Icon }) => {
-          const count = tier ? campaigns.filter((campaign) => campaign.riskTier === tier).length : campaigns.length;
-          return (
-            <Card key={label}>
-              <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
-                <Icon className="size-4 text-muted-foreground" aria-hidden="true" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-semibold">{count}</div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </section>
-
-      <CampaignQueueTable campaigns={campaigns} />
+      <LocalQueueDashboard seedCampaigns={campaigns} />
     </AppShell>
   );
 }
