@@ -3,10 +3,12 @@
 import { AlertTriangle, CheckCircle2, Clock3, RotateCcw, ShieldAlert } from "lucide-react";
 import { useMemo, useState, type ElementType } from "react";
 import { CampaignQueueTable } from "@/components/campaign-queue-table";
+import { SurgeIndicatorControl } from "@/components/surge-indicator-control";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocalQueue } from "@/components/use-local-queue";
 import {
+  createSeededQueue,
   getActiveCampaigns,
   notifyLocalQueueChanged,
   resetQueue,
@@ -29,6 +31,7 @@ export function LocalQueueDashboard({ seedCampaigns }: { seedCampaigns: Campaign
   const [view, setView] = useState<QueueView>("active");
 
   const activeCampaigns = useMemo(() => getActiveCampaigns(queue), [queue]);
+  const baselineActiveCount = useMemo(() => getActiveCampaigns(createSeededQueue(seedCampaigns)).length, [seedCampaigns]);
   const visibleCampaigns = useMemo(
     () => (view === "active" ? activeCampaigns : sortByQueuePriority(queue.records)),
     [activeCampaigns, queue.records, view]
@@ -89,6 +92,13 @@ export function LocalQueueDashboard({ seedCampaigns }: { seedCampaigns: Campaign
           </Button>
         </div>
       </div>
+
+      <SurgeIndicatorControl
+        activeQueueDepth={activeCampaigns.length}
+        baselineQueueDepth={baselineActiveCount}
+        className="mb-4"
+        compact
+      />
 
       <CampaignQueueTable campaigns={visibleCampaigns} showStatus={view === "all"} />
     </>
