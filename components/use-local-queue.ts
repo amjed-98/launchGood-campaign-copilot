@@ -1,6 +1,5 @@
 "use client";
-
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import {
   createSeededQueue,
   ensureQueueInStorage,
@@ -11,13 +10,31 @@ import {
 import type { Campaign } from "@/lib/types";
 
 export function useLocalQueue(seedCampaigns?: Campaign[]): LocalQueue {
+  const serverSnapshotRef = useRef<LocalQueue | null>(null);
+  const clientSnapshotRef = useRef<LocalQueue | null>(null);
+
   useEffect(() => {
     ensureQueueInStorage(window.localStorage, seedCampaigns);
   }, [seedCampaigns]);
 
   return useSyncExternalStore(
     subscribeToLocalQueue,
-    () => readQueueFromStorage(window.localStorage, seedCampaigns),
-    () => createSeededQueue(seedCampaigns)
+    () => {
+      const next = readQueueFromStorage(window.localStorage, seedCampaigns);
+      // Only swap the reference if the contents actually changed
+      if (
+        clientSnapshotRef.current === null ||
+        JSON.stringify(clientSnapshotRef.current) !== JSON.stringify(next)
+      ) {
+        clientSnapshotRef.current = next;
+      }
+      return clientSnapshotRef.current;
+    },
+    () => {
+      if (!serverSnapshotRef.current) {
+        serverSnapshotRef.current = createSeededQueue(seedCampaigns);
+      }
+      return serverSnapshotRef.current;
+    }
   );
 }
