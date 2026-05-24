@@ -87,6 +87,36 @@ describe("Document Gap Check", () => {
     expect(confirmedHit.canOverrideMissingDocuments).toBe(false);
   });
 
+  it("requires a pending sanctions screening to resolve while staying overridable", () => {
+    const result = checkDocumentGaps(
+      campaign({
+        sanctionsScreen: "pending",
+        documentsSubmitted: ["bank_verification", "quote_invoice", "trustee_id"]
+      })
+    );
+
+    expect(result.requiredDocuments).toEqual(expect.arrayContaining(["sanctions_screening_result"]));
+    expect(result.missingRequiredDocuments).toEqual(["sanctions_screening_result"]);
+    expect(result.riskSignals).toContain("Pending sanctions screening");
+    expect(isComplianceClearanceMissing(result)).toBe(false);
+    expect(result.canOverrideMissingDocuments).toBe(true);
+  });
+
+  it("adds no sanctions-specific document for a passed screen and records it as a positive signal", () => {
+    const result = checkDocumentGaps(
+      campaign({
+        sanctionsScreen: "pass",
+        documentsSubmitted: ["bank_verification", "quote_invoice", "trustee_id"]
+      })
+    );
+
+    expect(result.requiredDocuments).not.toContain("sanctions_screening_result");
+    expect(result.requiredDocuments).not.toContain("name_match_attestation");
+    expect(result.requiredDocuments).not.toContain("compliance_clearance");
+    expect(result.missingRequiredDocuments).toEqual([]);
+    expect(result.positiveSignals).toContain("Sanctions screen passed");
+  });
+
   it("adds high-goal verification without forcing optional documents to block approval", () => {
     const result = checkDocumentGaps(
       campaign({
