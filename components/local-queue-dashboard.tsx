@@ -15,6 +15,7 @@ import {
   sortByQueuePriority,
   writeQueueToStorage
 } from "@/lib/local-queue";
+import { getEffectiveRiskTier } from "@/lib/risk";
 import type { Campaign, RiskTier } from "@/lib/types";
 
 const summaryCards: Array<{ label: string; tier: RiskTier; icon: ElementType }> = [
@@ -48,7 +49,7 @@ export function LocalQueueDashboard({ seedCampaigns }: { seedCampaigns: Campaign
     <>
       <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {summaryCards.map(({ label, tier, icon: Icon }) => {
-          const count = activeCampaigns.filter((campaign) => campaign.riskTier === tier).length;
+          const count = activeCampaigns.filter((campaign) => getEffectiveRiskTier(campaign) === tier).length;
           return (
             <Card key={label}>
               <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">

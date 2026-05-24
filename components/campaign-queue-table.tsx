@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Clock } from "lucide-react";
 import { RiskBadge } from "@/components/risk-badge";
-import { formatMoney, hoursSinceSubmitted, sortByRisk } from "@/lib/risk";
+import { formatMoney, getEffectiveRiskTier, hasReviewerOverride, hoursSinceSubmitted, sortByRisk } from "@/lib/risk";
 import type { Campaign } from "@/lib/types";
 
 function formatQueueTime(hours: number) {
@@ -67,7 +67,10 @@ export function CampaignQueueTable({
                   <td className="px-4 py-4 text-muted-foreground">{campaign.creatorLocation}</td>
                   <td className="px-4 py-4 font-medium">{formatMoney(campaign.goalAmount)}</td>
                   <td className="px-4 py-4">
-                    <RiskBadge tier={campaign.riskTier} />
+                    <RiskBadge tier={getEffectiveRiskTier(campaign)} />
+                    {hasReviewerOverride(campaign) ? (
+                      <p className="mt-1 text-[11px] font-medium uppercase tracking-wide text-sky-700">Reviewer adjusted</p>
+                    ) : null}
                   </td>
                   {showStatus ? <td className="px-4 py-4 text-muted-foreground">{campaign.status}</td> : null}
                   <td className="px-4 py-4">

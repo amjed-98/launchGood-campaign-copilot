@@ -8,6 +8,11 @@ export type RecommendedAction =
   | "SENIOR_REVIEW"
   | "ESCALATE_COMPLIANCE";
 
+export type ReviewAssessment = {
+  riskTier: RiskTier;
+  recommendedAction: RecommendedAction;
+};
+
 export type Campaign = {
   id: string;
   title: string;
@@ -32,6 +37,7 @@ export type Campaign = {
   positiveSignals: string[];
   recommendedAction: RecommendedAction;
   reviewerNote: string;
+  currentReviewAssessment?: ReviewAssessment;
   reviewEvents?: ReviewEvent[];
 };
 
@@ -40,7 +46,8 @@ export type ReviewEventType =
   | "REJECTION"
   | "DOCUMENT_REQUEST"
   | "ESCALATION"
-  | "DOCUMENT_GAP_OVERRIDE";
+  | "DOCUMENT_GAP_OVERRIDE"
+  | "REVIEWER_OVERRIDE";
 
 export type ReviewEvent = {
   type: ReviewEventType;
@@ -49,6 +56,7 @@ export type ReviewEvent = {
   timestamp: string;
   draft?: string;
   missingDocuments?: string[];
+  assessment?: ReviewAssessment;
 };
 
 export type TriageResult = {

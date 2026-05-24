@@ -9,7 +9,8 @@ import {
   Loader2,
   Mail,
   Send,
-  ShieldAlert
+  ShieldAlert,
+  UserCog
 } from "lucide-react";
 import { RiskBadge } from "@/components/risk-badge";
 import { Button } from "@/components/ui/button";
@@ -25,15 +26,23 @@ import {
   writeQueueToStorage,
   type ReviewerQueueAction
 } from "@/lib/local-queue";
-import { formatMoney } from "@/lib/risk";
-import type { Campaign, ReviewEventType, TriageResult } from "@/lib/types";
+import { formatMoney, getCurrentAssessment, hasReviewerOverride } from "@/lib/risk";
+import type { Campaign, RecommendedAction, ReviewEventType, RiskTier, TriageResult } from "@/lib/types";
 
-const actionLabels = {
+const actionLabels: Record<RecommendedAction, string> = {
   APPROVE_REVIEW: "Approval review",
   REQUEST_DOCUMENTS: "Request documents",
   SENIOR_REVIEW: "Senior review",
   ESCALATE_COMPLIANCE: "Compliance escalation"
 };
+
+const riskTierOptions: RiskTier[] = ["LOW", "MEDIUM", "HIGH", "ESCALATE"];
+const recommendedActionOptions: RecommendedAction[] = [
+  "APPROVE_REVIEW",
+  "REQUEST_DOCUMENTS",
+  "SENIOR_REVIEW",
+  "ESCALATE_COMPLIANCE"
+];
 
 export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
   const queue = useLocalQueue();
@@ -52,6 +61,14 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
   const [actionError, setActionError] = useState("");
   const [loadingTriage, setLoadingTriage] = useState(false);
   const [loadingEmail, setLoadingEmail] = useState(false);
+
+  const currentAssessment = getCurrentAssessment(currentCampaign);
+  const isOverridden = hasReviewerOverride(currentCampaign);
+  const [overrideTier, setOverrideTier] = useState<RiskTier>(currentAssessment.riskTier);
+  const [overrideAction, setOverrideAction] = useState<RecommendedAction>(currentAssessment.recommendedAction);
+  const [overrideReason, setOverrideReason] = useState("");
+  const isOverrideChanged =
+    overrideTier !== currentAssessment.riskTier || overrideAction !== currentAssessment.recommendedAction;
 
   const derivedEmailIntent = useMemo(() => {
     if (triage.recommended_action === "APPROVE_REVIEW") return "approval-ready note";
@@ -137,7 +154,9 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
       writeQueueToStorage(window.localStorage, nextQueue);
       notifyLocalQueueChanged();
       setActionError("");
-      if (action.type !== "REQUEST_DOCS") {
+      if (action.type === "REVIEWER_OVERRIDE") {
+        setOverrideReason("");
+      } else if (action.type !== "REQUEST_DOCS") {
         setResolutionReason("");
       }
     } catch (error) {
@@ -210,7 +229,9 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <CardTitle>AI Risk Analysis</CardTitle>
-                  <CardDescription>{actionLabels[triage.recommended_action]}</CardDescription>
+                  <CardDescription>
+                    {actionLabels[triage.recommended_action]} · original AI triage, preserved after any reviewer override
+                  </CardDescription>
                 </div>
                 <RiskBadge tier={triage.risk_tier} />
               </div>
@@ -267,6 +288,92 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
                   </div>
                 )}
               </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle>Current Review Assessment</CardTitle>
+                  <CardDescription>
+                    {isOverridden
+                      ? "Reviewer-adjusted assessment used for queue priority. The AI never approves, rejects, or decides."
+                      : "Matches the AI triage until a reviewer records an override."}
+                  </CardDescription>
+                </div>
+                <RiskBadge tier={currentAssessment.riskTier} />
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Metric label="Current risk tier" value={currentAssessment.riskTier} />
+                <Metric label="Current recommended action" value={actionLabels[currentAssessment.recommendedAction]} />
+              </div>
+              {isOverridden ? (
+                <p className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+                  Adjusted by a reviewer. Original AI triage: {currentCampaign.riskTier} ·{" "}
+                  {actionLabels[currentCampaign.recommendedAction]}.
+                </p>
+              ) : null}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1 text-sm">
+                  <span className="text-xs font-semibold uppercase text-muted-foreground">Override risk tier</span>
+                  <select
+                    value={overrideTier}
+                    onChange={(event) => setOverrideTier(event.target.value as RiskTier)}
+                    disabled={isResolved}
+                    className="rounded-md border bg-white px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    {riskTierOptions.map((tier) => (
+                      <option key={tier} value={tier}>
+                        {tier}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="grid gap-1 text-sm">
+                  <span className="text-xs font-semibold uppercase text-muted-foreground">Override recommended action</span>
+                  <select
+                    value={overrideAction}
+                    onChange={(event) => setOverrideAction(event.target.value as RecommendedAction)}
+                    disabled={isResolved}
+                    className="rounded-md border bg-white px-3 py-2 text-sm disabled:opacity-50"
+                  >
+                    {recommendedActionOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {actionLabels[option]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <Textarea
+                value={overrideReason}
+                onChange={(event) => setOverrideReason(event.target.value)}
+                className="min-h-[90px]"
+                placeholder="Resolution reason for this reviewer override."
+                disabled={isResolved}
+              />
+              <Button
+                className="w-full"
+                onClick={() =>
+                  applyAction({
+                    type: "REVIEWER_OVERRIDE",
+                    riskTier: overrideTier,
+                    recommendedAction: overrideAction,
+                    reason: overrideReason
+                  })
+                }
+                disabled={isResolved || !isOverrideChanged || !overrideReason.trim()}
+              >
+                <UserCog className="size-4" aria-hidden="true" />
+                Record reviewer override
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Overriding adjusts triage for human-led prioritization only. It does not approve, reject, or send anything.
+              </p>
             </CardContent>
           </Card>
 
@@ -376,6 +483,11 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
                         </time>
                       </div>
                       <p className="mt-1 text-muted-foreground">{entry.note}</p>
+                      {entry.assessment ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Adjusted to {entry.assessment.riskTier} · {actionLabels[entry.assessment.recommendedAction]}
+                        </p>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -407,7 +519,8 @@ function formatReviewEventType(type: ReviewEventType) {
     REJECTION: "Rejection",
     DOCUMENT_REQUEST: "Document request",
     ESCALATION: "Escalation",
-    DOCUMENT_GAP_OVERRIDE: "Document gap override"
+    DOCUMENT_GAP_OVERRIDE: "Document gap override",
+    REVIEWER_OVERRIDE: "Reviewer override"
   };
   return labels[type];
 }

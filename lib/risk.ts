@@ -1,4 +1,4 @@
-import type { Campaign, RiskTier } from "@/lib/types";
+import type { Campaign, ReviewAssessment, RiskTier } from "@/lib/types";
 
 export const riskWeight: Record<RiskTier, number> = {
   ESCALATE: 4,
@@ -6,6 +6,23 @@ export const riskWeight: Record<RiskTier, number> = {
   MEDIUM: 2,
   LOW: 1
 };
+
+export function getCurrentAssessment(campaign: Campaign): ReviewAssessment {
+  return (
+    campaign.currentReviewAssessment ?? {
+      riskTier: campaign.riskTier,
+      recommendedAction: campaign.recommendedAction
+    }
+  );
+}
+
+export function getEffectiveRiskTier(campaign: Campaign): RiskTier {
+  return getCurrentAssessment(campaign).riskTier;
+}
+
+export function hasReviewerOverride(campaign: Campaign): boolean {
+  return campaign.currentReviewAssessment !== undefined;
+}
 
 export const riskLabelClasses: Record<RiskTier, string> = {
   LOW: "border-emerald-200 bg-emerald-50 text-emerald-700",
@@ -16,7 +33,7 @@ export const riskLabelClasses: Record<RiskTier, string> = {
 
 export function sortByRisk(campaigns: Campaign[]) {
   return [...campaigns].sort((a, b) => {
-    const byRisk = riskWeight[b.riskTier] - riskWeight[a.riskTier];
+    const byRisk = riskWeight[getEffectiveRiskTier(b)] - riskWeight[getEffectiveRiskTier(a)];
     if (byRisk !== 0) return byRisk;
     return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
   });

@@ -1,6 +1,6 @@
 import { campaigns as seededCampaigns } from "@/lib/mock-campaigns";
-import { riskWeight } from "@/lib/risk";
-import type { Campaign, CampaignStatus, ReviewEvent } from "@/lib/types";
+import { getCurrentAssessment, getEffectiveRiskTier, riskWeight } from "@/lib/risk";
+import type { Campaign, CampaignStatus, RecommendedAction, ReviewAssessment, ReviewEvent, RiskTier } from "@/lib/types";
 
 export const LOCAL_QUEUE_STORAGE_KEY = "launchgood-local-queue:v1";
 export const LOCAL_QUEUE_UPDATED_EVENT = "launchgood-local-queue-updated";
@@ -31,6 +31,13 @@ export type ReviewerQueueAction =
       type: "DOCUMENT_GAP_OVERRIDE";
       reason?: string;
       timestamp?: string;
+    }
+  | {
+      type: "REVIEWER_OVERRIDE";
+      riskTier?: RiskTier;
+      recommendedAction?: RecommendedAction;
+      reason?: string;
+      timestamp?: string;
     };
 
 export type LocalQueue = {
@@ -51,7 +58,7 @@ export function resetQueue(_queue: LocalQueue, seeds: Campaign[] = seededCampaig
 
 export function sortByQueuePriority(campaigns: Campaign[]) {
   return [...campaigns].sort((a, b) => {
-    const byRisk = riskWeight[b.riskTier] - riskWeight[a.riskTier];
+    const byRisk = riskWeight[getEffectiveRiskTier(b)] - riskWeight[getEffectiveRiskTier(a)];
     if (byRisk !== 0) return byRisk;
     return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
   });
@@ -104,6 +111,25 @@ export function applyReviewerAction(queue: LocalQueue, campaignId: string, actio
 
       const nextCampaign = cloneCampaign(campaign);
       const timestamp = action.timestamp ?? new Date().toISOString();
+
+      if (action.type === "REVIEWER_OVERRIDE") {
+        const reason = requireReason(action.reason, "Resolution reason is required for reviewer override");
+        const currentAssessment = getCurrentAssessment(nextCampaign);
+        const nextAssessment = applyAssessmentOverride(currentAssessment, action);
+        if (isSameAssessment(currentAssessment, nextAssessment)) {
+          throw new Error("Reviewer override must change the risk tier or recommended action.");
+        }
+        return addReviewEvent(
+          { ...nextCampaign, currentReviewAssessment: nextAssessment },
+          {
+            type: "REVIEWER_OVERRIDE",
+            campaignId,
+            note: reason,
+            timestamp,
+            assessment: nextAssessment
+          }
+        );
+      }
 
       if (action.type === "DOCUMENT_GAP_OVERRIDE") {
         const reason = requireReason(action.reason, "Document gap override");
@@ -236,11 +262,29 @@ function cloneCampaign(campaign: Campaign): Campaign {
     missingDocuments: [...campaign.missingDocuments],
     riskSignals: [...campaign.riskSignals],
     positiveSignals: [...campaign.positiveSignals],
+    currentReviewAssessment: campaign.currentReviewAssessment
+      ? { ...campaign.currentReviewAssessment }
+      : undefined,
     reviewEvents: campaign.reviewEvents?.map((event) => ({
       ...event,
-      missingDocuments: event.missingDocuments ? [...event.missingDocuments] : undefined
+      missingDocuments: event.missingDocuments ? [...event.missingDocuments] : undefined,
+      assessment: event.assessment ? { ...event.assessment } : undefined
     }))
   };
+}
+
+function applyAssessmentOverride(
+  current: ReviewAssessment,
+  override: { riskTier?: RiskTier; recommendedAction?: RecommendedAction }
+): ReviewAssessment {
+  return {
+    riskTier: override.riskTier ?? current.riskTier,
+    recommendedAction: override.recommendedAction ?? current.recommendedAction
+  };
+}
+
+function isSameAssessment(a: ReviewAssessment, b: ReviewAssessment): boolean {
+  return a.riskTier === b.riskTier && a.recommendedAction === b.recommendedAction;
 }
 
 function addReviewEvent(campaign: Campaign, event: ReviewEvent): Campaign {

@@ -8,6 +8,7 @@ import {
   sortByQueuePriority,
   updateCampaignStatus
 } from "@/lib/local-queue";
+import { getCurrentAssessment, getEffectiveRiskTier } from "@/lib/risk";
 import type { Campaign } from "@/lib/types";
 
 function campaign(overrides: Partial<Campaign> & Pick<Campaign, "id" | "riskTier" | "submittedAt">): Campaign {
@@ -191,5 +192,122 @@ describe("Unified Local Queue", () => {
       type: "DOCUMENT_REQUEST",
       draft: "Please upload bank verification."
     });
+  });
+});
+
+describe("Reviewer Override and Current Review Assessment", () => {
+  const aiTriaged = campaign({
+    id: "ai-medium",
+    riskTier: "MEDIUM",
+    submittedAt: "2026-05-23T08:00:00+03:00",
+    recommendedAction: "REQUEST_DOCUMENTS"
+  });
+
+  it("records a reviewer override as the current review assessment while preserving the original AI triage", () => {
+    const queue = createSeededQueue([aiTriaged]);
+
+    const overridden = applyReviewerAction(queue, "ai-medium", {
+      type: "REVIEWER_OVERRIDE",
+      riskTier: "HIGH",
+      reason: "Beneficiary region escalated by latest sanctions guidance.",
+      timestamp: "2026-05-23T09:00:00+03:00"
+    });
+
+    const record = overridden.records.find((entry) => entry.id === "ai-medium");
+
+    expect(record?.riskTier).toBe("MEDIUM");
+    expect(record?.recommendedAction).toBe("REQUEST_DOCUMENTS");
+    expect(record?.currentReviewAssessment).toEqual({
+      riskTier: "HIGH",
+      recommendedAction: "REQUEST_DOCUMENTS"
+    });
+    expect(getCurrentAssessment(record!)).toEqual({
+      riskTier: "HIGH",
+      recommendedAction: "REQUEST_DOCUMENTS"
+    });
+    expect(record?.reviewEvents?.at(-1)).toMatchObject({
+      type: "REVIEWER_OVERRIDE",
+      note: "Beneficiary region escalated by latest sanctions guidance.",
+      assessment: { riskTier: "HIGH", recommendedAction: "REQUEST_DOCUMENTS" }
+    });
+  });
+
+  it("requires a resolution reason for every reviewer override", () => {
+    const queue = createSeededQueue([aiTriaged]);
+
+    expect(() =>
+      applyReviewerAction(queue, "ai-medium", {
+        type: "REVIEWER_OVERRIDE",
+        riskTier: "HIGH",
+        timestamp: "2026-05-23T09:00:00+03:00"
+      })
+    ).toThrow("Resolution reason is required for reviewer override.");
+  });
+
+  it("rejects an override that does not change the current review assessment", () => {
+    const queue = createSeededQueue([aiTriaged]);
+
+    expect(() =>
+      applyReviewerAction(queue, "ai-medium", {
+        type: "REVIEWER_OVERRIDE",
+        reason: "No actual change requested.",
+        timestamp: "2026-05-23T09:00:00+03:00"
+      })
+    ).toThrow("Reviewer override must change the risk tier or recommended action.");
+
+    expect(() =>
+      applyReviewerAction(queue, "ai-medium", {
+        type: "REVIEWER_OVERRIDE",
+        riskTier: "MEDIUM",
+        recommendedAction: "REQUEST_DOCUMENTS",
+        reason: "Same values as the AI triage.",
+        timestamp: "2026-05-23T09:00:00+03:00"
+      })
+    ).toThrow("Reviewer override must change the risk tier or recommended action.");
+  });
+
+  it("compounds successive overrides from the latest current review assessment", () => {
+    const queue = createSeededQueue([aiTriaged]);
+
+    const tierOverride = applyReviewerAction(queue, "ai-medium", {
+      type: "REVIEWER_OVERRIDE",
+      riskTier: "HIGH",
+      reason: "Escalated risk after manual review.",
+      timestamp: "2026-05-23T09:00:00+03:00"
+    });
+    const actionOverride = applyReviewerAction(tierOverride, "ai-medium", {
+      type: "REVIEWER_OVERRIDE",
+      recommendedAction: "SENIOR_REVIEW",
+      reason: "Route to a senior reviewer.",
+      timestamp: "2026-05-23T09:10:00+03:00"
+    });
+
+    const record = actionOverride.records.find((entry) => entry.id === "ai-medium");
+
+    expect(getCurrentAssessment(record!)).toEqual({
+      riskTier: "HIGH",
+      recommendedAction: "SENIOR_REVIEW"
+    });
+    expect(record?.reviewEvents?.filter((event) => event.type === "REVIEWER_OVERRIDE")).toHaveLength(2);
+  });
+
+  it("prioritizes the active queue by the current review assessment when an override raises the tier", () => {
+    const queue = createSeededQueue([
+      campaign({ id: "ai-low", riskTier: "LOW", submittedAt: "2026-05-23T08:00:00+03:00" }),
+      campaign({ id: "ai-high", riskTier: "HIGH", submittedAt: "2026-05-23T07:00:00+03:00" })
+    ]);
+
+    expect(getActiveCampaigns(queue).map((record) => record.id)).toEqual(["ai-high", "ai-low"]);
+
+    const escalated = applyReviewerAction(queue, "ai-low", {
+      type: "REVIEWER_OVERRIDE",
+      riskTier: "ESCALATE",
+      reason: "Late-breaking sanctions concern raised by analyst.",
+      timestamp: "2026-05-23T09:00:00+03:00"
+    });
+
+    const ranked = getActiveCampaigns(escalated);
+    expect(ranked.map((record) => record.id)).toEqual(["ai-low", "ai-high"]);
+    expect(getEffectiveRiskTier(ranked[0])).toBe("ESCALATE");
   });
 });
