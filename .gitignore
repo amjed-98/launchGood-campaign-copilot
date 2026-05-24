@@ -16,3 +16,4 @@ yarn.lock
 # Local Netlify folder
 .netlify
 /tsconfig.json
+ralph/
