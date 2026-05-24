@@ -189,9 +189,67 @@ describe("Unified Local Queue", () => {
     expect(getActiveCampaigns(rejected).map((record) => record.id)).toEqual(["needs-senior", "needs-docs"]);
     expect(getResolvedCampaigns(rejected).map((record) => record.id)).toEqual(["not-eligible"]);
     expect(rejected.records.find((record) => record.id === "needs-docs")?.reviewEvents?.[0]).toMatchObject({
-      type: "DOCUMENT_REQUEST",
+      type: "SIMULATED_EMAIL_SEND",
       draft: "Please upload bank verification."
     });
+  });
+});
+
+describe("Simulated Email Send with Email Edit Buckets", () => {
+  const needsDocs = campaign({
+    id: "needs-docs",
+    riskTier: "MEDIUM",
+    submittedAt: "2026-05-23T06:00:00+03:00"
+  });
+
+  it("records a simulated email send with the final draft and waiting status while staying active", () => {
+    const queue = createSeededQueue([needsDocs]);
+
+    const sent = applyReviewerAction(queue, "needs-docs", {
+      type: "REQUEST_DOCS",
+      aiDraft: "Please upload your bank verification document",
+      draft: "Please upload your bank verification document today as soon as possible",
+      timestamp: "2026-05-23T09:00:00+03:00"
+    });
+
+    const record = sent.records.find((entry) => entry.id === "needs-docs");
+    expect(record?.status).toBe("Waiting on creator");
+    expect(record?.reviewEvents?.at(-1)).toMatchObject({
+      type: "SIMULATED_EMAIL_SEND",
+      draft: "Please upload your bank verification document today as soon as possible",
+      emailEditBucket: "moderate"
+    });
+    expect(getActiveCampaigns(sent).map((entry) => entry.id)).toEqual(["needs-docs"]);
+  });
+
+  it("classifies an unedited send as an unchanged edit bucket", () => {
+    const queue = createSeededQueue([needsDocs]);
+    const draft = "Please upload your bank verification document.";
+
+    const sent = applyReviewerAction(queue, "needs-docs", {
+      type: "REQUEST_DOCS",
+      aiDraft: draft,
+      draft,
+      timestamp: "2026-05-23T09:00:00+03:00"
+    });
+
+    expect(sent.records.find((entry) => entry.id === "needs-docs")?.reviewEvents?.at(-1)?.emailEditBucket).toBe(
+      "unchanged"
+    );
+  });
+
+  it("records a no_ai_draft bucket when no AI baseline is supplied", () => {
+    const queue = createSeededQueue([needsDocs]);
+
+    const sent = applyReviewerAction(queue, "needs-docs", {
+      type: "REQUEST_DOCS",
+      draft: "Reviewer wrote this request manually.",
+      timestamp: "2026-05-23T09:00:00+03:00"
+    });
+
+    expect(sent.records.find((entry) => entry.id === "needs-docs")?.reviewEvents?.at(-1)?.emailEditBucket).toBe(
+      "no_ai_draft"
+    );
   });
 });
 

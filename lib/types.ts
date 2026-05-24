@@ -44,10 +44,12 @@ export type Campaign = {
 export type ReviewEventType =
   | "APPROVAL"
   | "REJECTION"
-  | "DOCUMENT_REQUEST"
+  | "SIMULATED_EMAIL_SEND"
   | "ESCALATION"
   | "DOCUMENT_GAP_OVERRIDE"
   | "REVIEWER_OVERRIDE";
+
+export type EmailEditBucket = "unchanged" | "minor" | "moderate" | "major" | "no_ai_draft";
 
 export type ReviewEvent = {
   type: ReviewEventType;
@@ -55,6 +57,7 @@ export type ReviewEvent = {
   note: string;
   timestamp: string;
   draft?: string;
+  emailEditBucket?: EmailEditBucket;
   missingDocuments?: string[];
   assessment?: ReviewAssessment;
 };

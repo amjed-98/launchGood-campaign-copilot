@@ -1,3 +1,4 @@
+import { classifyEmailEdit } from "@/lib/email-edit-bucket";
 import { campaigns as seededCampaigns } from "@/lib/mock-campaigns";
 import { getCurrentAssessment, getEffectiveRiskTier, riskWeight } from "@/lib/risk";
 import type { Campaign, CampaignStatus, RecommendedAction, ReviewAssessment, ReviewEvent, RiskTier } from "@/lib/types";
@@ -20,6 +21,7 @@ export type ReviewerQueueAction =
   | {
       type: "REQUEST_DOCS";
       draft: string;
+      aiDraft?: string;
       timestamp?: string;
     }
   | {
@@ -186,13 +188,15 @@ export function applyReviewerAction(queue: LocalQueue, campaignId: string, actio
         );
       }
 
+      const emailEditBucket = classifyEmailEdit(action.aiDraft ?? "", action.draft).bucket;
       return addReviewEvent(
         { ...nextCampaign, status: "Waiting on creator" },
         {
-          type: "DOCUMENT_REQUEST",
+          type: "SIMULATED_EMAIL_SEND",
           campaignId,
-          note: "Document request sent to creator.",
+          note: "Simulated email send recorded the final draft. No external email was delivered.",
           draft: action.draft,
+          emailEditBucket,
           timestamp
         }
       );

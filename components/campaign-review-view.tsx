@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { useLocalQueue } from "@/components/use-local-queue";
+import { emailEditBucketLabels } from "@/lib/email-edit-bucket";
 import {
   applyReviewerAction,
   findQueuedCampaign,
@@ -57,6 +58,7 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
     reviewer_note: campaign.reviewerNote
   });
   const [emailDraft, setEmailDraft] = useState("");
+  const [aiEmailDraft, setAiEmailDraft] = useState("");
   const [resolutionReason, setResolutionReason] = useState("");
   const [actionError, setActionError] = useState("");
   const [loadingTriage, setLoadingTriage] = useState(false);
@@ -124,10 +126,12 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
         const draft = await requestEmailDraft();
         if (!ignore) {
           setEmailDraft(draft);
+          setAiEmailDraft(draft);
         }
       } catch {
         if (!ignore) {
           setEmailDraft("");
+          setAiEmailDraft("");
         }
       }
     }
@@ -141,7 +145,9 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
   async function generateEmail() {
     setLoadingEmail(true);
     try {
-      setEmailDraft(await requestEmailDraft());
+      const draft = await requestEmailDraft();
+      setEmailDraft(draft);
+      setAiEmailDraft(draft);
     } finally {
       setLoadingEmail(false);
     }
@@ -409,12 +415,16 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={() => applyAction({ type: "REQUEST_DOCS", draft: emailDraft })}
+                  onClick={() => applyAction({ type: "REQUEST_DOCS", draft: emailDraft, aiDraft: aiEmailDraft })}
                   disabled={isResolved || !emailDraft.trim()}
                 >
                   <Send className="size-4" aria-hidden="true" />
                   Send Document Request
                 </Button>
+                <p className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  Sending records a Simulated Email Send event and moves the campaign to Waiting on creator. No external
+                  email integration exists in this prototype.
+                </p>
                 <Button
                   variant="outline"
                   onClick={() => applyAction({ type: "DOCUMENT_GAP_OVERRIDE", reason: resolutionReason })}
@@ -483,6 +493,11 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
                         </time>
                       </div>
                       <p className="mt-1 text-muted-foreground">{entry.note}</p>
+                      {entry.emailEditBucket ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Email edit bucket: {emailEditBucketLabels[entry.emailEditBucket]}
+                        </p>
+                      ) : null}
                       {entry.assessment ? (
                         <p className="mt-1 text-xs text-muted-foreground">
                           Adjusted to {entry.assessment.riskTier} · {actionLabels[entry.assessment.recommendedAction]}
@@ -517,7 +532,7 @@ function formatReviewEventType(type: ReviewEventType) {
   const labels: Record<ReviewEventType, string> = {
     APPROVAL: "Approval",
     REJECTION: "Rejection",
-    DOCUMENT_REQUEST: "Document request",
+    SIMULATED_EMAIL_SEND: "Simulated email send",
     ESCALATION: "Escalation",
     DOCUMENT_GAP_OVERRIDE: "Document gap override",
     REVIEWER_OVERRIDE: "Reviewer override"
