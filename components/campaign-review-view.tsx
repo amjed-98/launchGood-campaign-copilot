@@ -8,6 +8,7 @@ import {
   FileCheck2,
   Loader2,
   Mail,
+  MessageSquareReply,
   Send,
   ShieldAlert,
   UserCog
@@ -21,6 +22,7 @@ import { emailEditBucketLabels } from "@/lib/email-edit-bucket";
 import {
   applyReviewerAction,
   findQueuedCampaign,
+  isAwaitingCreatorResponse,
   isResolvedCampaign,
   notifyLocalQueueChanged,
   readQueueFromStorage,
@@ -60,6 +62,7 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
   const [emailDraft, setEmailDraft] = useState("");
   const [aiEmailDraft, setAiEmailDraft] = useState("");
   const [resolutionReason, setResolutionReason] = useState("");
+  const [creatorResponseNote, setCreatorResponseNote] = useState("");
   const [actionError, setActionError] = useState("");
   const [loadingTriage, setLoadingTriage] = useState(false);
   const [loadingEmail, setLoadingEmail] = useState(false);
@@ -162,6 +165,8 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
       setActionError("");
       if (action.type === "REVIEWER_OVERRIDE") {
         setOverrideReason("");
+      } else if (action.type === "CREATOR_RESPONSE") {
+        setCreatorResponseNote("");
       } else if (action.type !== "REQUEST_DOCS") {
         setResolutionReason("");
       }
@@ -476,6 +481,50 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
             </CardContent>
           </Card>
 
+          {isAwaitingCreatorResponse(currentCampaign) && !isResolved ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Simulated Creator Response</CardTitle>
+                <CardDescription>
+                  Record whether the creator&apos;s reply to the document request was complete or incomplete.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Textarea
+                  value={creatorResponseNote}
+                  onChange={(event) => setCreatorResponseNote(event.target.value)}
+                  className="min-h-[90px]"
+                  placeholder="Optional reviewer note about the creator's response."
+                />
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      applyAction({ type: "CREATOR_RESPONSE", outcome: "complete", note: creatorResponseNote })
+                    }
+                  >
+                    <CheckCircle2 className="size-4" aria-hidden="true" />
+                    Mark response complete
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      applyAction({ type: "CREATOR_RESPONSE", outcome: "incomplete", note: creatorResponseNote })
+                    }
+                  >
+                    <MessageSquareReply className="size-4" aria-hidden="true" />
+                    Mark response incomplete
+                  </Button>
+                </div>
+                <p className="rounded-md border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                  This logs a Simulated Creator Response event only. The prototype has no real creator messaging or
+                  document upload. A complete response returns the campaign to In review; an incomplete response keeps it
+                  Waiting on creator.
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
+
           {currentCampaign.reviewEvents && currentCampaign.reviewEvents.length > 0 ? (
             <Card>
               <CardHeader>
@@ -496,6 +545,11 @@ export function CampaignReviewView({ campaign }: { campaign: Campaign }) {
                       {entry.emailEditBucket ? (
                         <p className="mt-1 text-xs text-muted-foreground">
                           Email edit bucket: {emailEditBucketLabels[entry.emailEditBucket]}
+                        </p>
+                      ) : null}
+                      {entry.creatorResponseOutcome ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Creator response: {entry.creatorResponseOutcome}
                         </p>
                       ) : null}
                       {entry.assessment ? (
@@ -533,6 +587,7 @@ function formatReviewEventType(type: ReviewEventType) {
     APPROVAL: "Approval",
     REJECTION: "Rejection",
     SIMULATED_EMAIL_SEND: "Simulated email send",
+    SIMULATED_CREATOR_RESPONSE: "Simulated creator response",
     ESCALATION: "Escalation",
     DOCUMENT_GAP_OVERRIDE: "Document gap override",
     REVIEWER_OVERRIDE: "Reviewer override"

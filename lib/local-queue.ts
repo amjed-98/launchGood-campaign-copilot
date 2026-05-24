@@ -1,7 +1,15 @@
 import { classifyEmailEdit } from "@/lib/email-edit-bucket";
 import { campaigns as seededCampaigns } from "@/lib/mock-campaigns";
 import { getCurrentAssessment, getEffectiveRiskTier, riskWeight } from "@/lib/risk";
-import type { Campaign, CampaignStatus, RecommendedAction, ReviewAssessment, ReviewEvent, RiskTier } from "@/lib/types";
+import type {
+  Campaign,
+  CampaignStatus,
+  CreatorResponseOutcome,
+  RecommendedAction,
+  ReviewAssessment,
+  ReviewEvent,
+  RiskTier
+} from "@/lib/types";
 
 export const LOCAL_QUEUE_STORAGE_KEY = "launchgood-local-queue:v1";
 export const LOCAL_QUEUE_UPDATED_EVENT = "launchgood-local-queue-updated";
@@ -40,6 +48,12 @@ export type ReviewerQueueAction =
       recommendedAction?: RecommendedAction;
       reason?: string;
       timestamp?: string;
+    }
+  | {
+      type: "CREATOR_RESPONSE";
+      outcome: CreatorResponseOutcome;
+      note?: string;
+      timestamp?: string;
     };
 
 export type LocalQueue = {
@@ -68,6 +82,10 @@ export function sortByQueuePriority(campaigns: Campaign[]) {
 
 export function isResolvedCampaign(campaign: Campaign) {
   return resolvedStatuses.has(campaign.status);
+}
+
+export function isAwaitingCreatorResponse(campaign: Campaign) {
+  return campaign.status === "Waiting on creator";
 }
 
 export function getActiveCampaigns(queue: LocalQueue) {
@@ -183,6 +201,24 @@ export function applyReviewerAction(queue: LocalQueue, campaignId: string, actio
             type: "ESCALATION",
             campaignId,
             note: reason,
+            timestamp
+          }
+        );
+      }
+
+      if (action.type === "CREATOR_RESPONSE") {
+        if (!isAwaitingCreatorResponse(nextCampaign)) {
+          throw new Error("Simulated creator response is only available while waiting on the creator.");
+        }
+        const note = action.note?.trim() || `Creator response marked ${action.outcome}.`;
+        const nextStatus: CampaignStatus = action.outcome === "complete" ? "In review" : "Waiting on creator";
+        return addReviewEvent(
+          { ...nextCampaign, status: nextStatus },
+          {
+            type: "SIMULATED_CREATOR_RESPONSE",
+            campaignId,
+            note,
+            creatorResponseOutcome: action.outcome,
             timestamp
           }
         );

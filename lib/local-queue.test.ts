@@ -253,6 +253,77 @@ describe("Simulated Email Send with Email Edit Buckets", () => {
   });
 });
 
+describe("Simulated Creator Response", () => {
+  const needsDocs = campaign({
+    id: "needs-docs",
+    riskTier: "MEDIUM",
+    submittedAt: "2026-05-23T06:00:00+03:00"
+  });
+
+  function waitingOnCreator() {
+    return applyReviewerAction(createSeededQueue([needsDocs]), "needs-docs", {
+      type: "REQUEST_DOCS",
+      draft: "Please upload your bank verification document.",
+      timestamp: "2026-05-23T09:00:00+03:00"
+    });
+  }
+
+  it("returns a campaign to review-ready status when the creator response is complete", () => {
+    const responded = applyReviewerAction(waitingOnCreator(), "needs-docs", {
+      type: "CREATOR_RESPONSE",
+      outcome: "complete",
+      note: "Creator uploaded the requested bank verification.",
+      timestamp: "2026-05-23T11:00:00+03:00"
+    });
+
+    const record = responded.records.find((entry) => entry.id === "needs-docs");
+    expect(record?.status).toBe("In review");
+    expect(getActiveCampaigns(responded).map((entry) => entry.id)).toEqual(["needs-docs"]);
+    expect(record?.reviewEvents?.at(-1)).toMatchObject({
+      type: "SIMULATED_CREATOR_RESPONSE",
+      creatorResponseOutcome: "complete",
+      note: "Creator uploaded the requested bank verification.",
+      timestamp: "2026-05-23T11:00:00+03:00"
+    });
+  });
+
+  it("keeps a campaign waiting on the creator when the response is incomplete", () => {
+    const responded = applyReviewerAction(waitingOnCreator(), "needs-docs", {
+      type: "CREATOR_RESPONSE",
+      outcome: "incomplete",
+      note: "Creator replied but did not attach the document.",
+      timestamp: "2026-05-23T11:00:00+03:00"
+    });
+
+    const record = responded.records.find((entry) => entry.id === "needs-docs");
+    expect(record?.status).toBe("Waiting on creator");
+    expect(record?.reviewEvents?.at(-1)?.creatorResponseOutcome).toBe("incomplete");
+    expect(getActiveCampaigns(responded).map((entry) => entry.id)).toEqual(["needs-docs"]);
+  });
+
+  it("records a default note when the reviewer omits one", () => {
+    const responded = applyReviewerAction(waitingOnCreator(), "needs-docs", {
+      type: "CREATOR_RESPONSE",
+      outcome: "complete",
+      timestamp: "2026-05-23T11:00:00+03:00"
+    });
+
+    expect(responded.records.find((entry) => entry.id === "needs-docs")?.reviewEvents?.at(-1)?.note).toBe(
+      "Creator response marked complete."
+    );
+  });
+
+  it("rejects a creator response when the campaign is not waiting on the creator", () => {
+    expect(() =>
+      applyReviewerAction(createSeededQueue([needsDocs]), "needs-docs", {
+        type: "CREATOR_RESPONSE",
+        outcome: "complete",
+        timestamp: "2026-05-23T11:00:00+03:00"
+      })
+    ).toThrow("Simulated creator response is only available while waiting on the creator.");
+  });
+});
+
 describe("Reviewer Override and Current Review Assessment", () => {
   const aiTriaged = campaign({
     id: "ai-medium",

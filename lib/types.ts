@@ -45,11 +45,14 @@ export type ReviewEventType =
   | "APPROVAL"
   | "REJECTION"
   | "SIMULATED_EMAIL_SEND"
+  | "SIMULATED_CREATOR_RESPONSE"
   | "ESCALATION"
   | "DOCUMENT_GAP_OVERRIDE"
   | "REVIEWER_OVERRIDE";
 
 export type EmailEditBucket = "unchanged" | "minor" | "moderate" | "major" | "no_ai_draft";
+
+export type CreatorResponseOutcome = "complete" | "incomplete";
 
 export type ReviewEvent = {
   type: ReviewEventType;
@@ -58,6 +61,7 @@ export type ReviewEvent = {
   timestamp: string;
   draft?: string;
   emailEditBucket?: EmailEditBucket;
+  creatorResponseOutcome?: CreatorResponseOutcome;
   missingDocuments?: string[];
   assessment?: ReviewAssessment;
 };
